@@ -200,7 +200,7 @@ void CClient::serialize(BinarySerializer & h, const int version)
 		i->second->saveGame(h, version);
 	}
 
-	if(version >= 790)
+	if(version >= 800)
 	{
 		JsonNode scriptsState;
 		clientScripts->serializeState(h.saving, scriptsState);
@@ -270,10 +270,13 @@ void CClient::serialize(BinaryDeserializer & h, const int version)
 		nInt.reset();
 	}
 
-	if(version >= 790)
 	{
 		JsonNode scriptsState;
-		h & scriptsState;
+		if(version >= 800)
+		{
+			h & scriptsState;
+		}
+
 		clientScripts->serializeState(h.saving, scriptsState);
 	}
 

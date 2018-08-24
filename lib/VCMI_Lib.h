@@ -79,13 +79,17 @@ public:
 
 	template <typename Handler> void serialize(Handler &h, const int version)
 	{
-		if(version >= 790)
+		if(version >= 800)
 		{
 			h & scriptHandler;//must be first (or second after modh), it can modify factories other handlers depends on
 			if(!h.saving)
 			{
 				scriptsLoaded();
 			}
+		}
+		else if(!h.saving)
+		{
+			update800();
 		}
 
 		h & heroh;
@@ -108,6 +112,9 @@ public:
 			callWhenDeserializing();
 		}
 	}
+
+private:
+	void update800();
 };
 
 extern DLL_LINKAGE LibClasses * VLC;

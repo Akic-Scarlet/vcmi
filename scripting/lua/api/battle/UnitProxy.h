@@ -24,7 +24,6 @@ namespace battle
 using ::battle::IUnitInfo;
 using ::battle::Unit;
 
-
 class UnitProxy : public OpaqueWrapper<const Unit, UnitProxy>
 {
 public:

@@ -227,3 +227,10 @@ LibClasses::~LibClasses()
 {
 	clear();
 }
+
+void LibClasses::update800()
+{
+	vstd::clear_pointer(scriptHandler);
+	scriptHandler = new scripting::ScriptHandler();
+}
+

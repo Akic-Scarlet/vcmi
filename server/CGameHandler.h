@@ -259,7 +259,7 @@ public:
 			h & getRandomGenerator();
 		}
 
-		if(version >= 790)
+		if(version >= 800)
 		{
 			//TODO: serialize scripts state
 			JsonNode scriptsState;
