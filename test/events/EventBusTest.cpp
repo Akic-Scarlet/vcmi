@@ -19,43 +19,58 @@ public:
 	virtual ~Subscription() = default;
 };
 
+class EventBus;
 
-template <typename Event>
+template <typename E>
 class SubscriptionRegistry
 {
 public:
-	using PreHandler = std::function<void(Event &)>;
-	using PostHandler = std::function<void(const Event &)>;
+	using PreHandler = std::function<void(const EventBus *, E &)>;
+	using PostHandler = std::function<void(const EventBus *, const E &)>;
+	using BusTag = const void *;
 
-
-	std::unique_ptr<Subscription> subscribeBefore(PreHandler && cb)
+	std::unique_ptr<Subscription> subscribeBefore(BusTag tag, PreHandler && cb)
 	{
 		auto storage = std::make_shared<PreHandlerStorage>(std::move(cb));
-		preHandlers.push_back(storage);
-		return make_unique<PreSubscription>(storage);
+		preHandlers[tag].push_back(storage);
+		return make_unique<PreSubscription>(tag, storage);
 	}
 
-	std::unique_ptr<Subscription> subscribeAfter(PostHandler && cb)
+	std::unique_ptr<Subscription> subscribeAfter(BusTag tag, PostHandler && cb)
 	{
 		auto storage = std::make_shared<PostHandlerStorage>(std::move(cb));
-		postHandlers.push_back(storage);
-		return make_unique<PostSubscription>(storage);
+		postHandlers[tag].push_back(storage);
+		return make_unique<PostSubscription>(tag, storage);
 	}
 
-	void executeEvent(Event * event)
+	void executeEvent(const EventBus * bus, E & event)
 	{
-		for(auto & h : preHandlers)
-			(*h)(event);
+		{
+			auto it = preHandlers.find(bus);
 
-		event->internalExecute();
+			if(it != std::end(preHandlers))
+			{
+				for(auto & h : it->second)
+					(*h)(bus, event);
+			}
+		}
 
-		for(auto & h : postHandlers)
-			(*h)(event);
+		event.internalExecute(bus);
+
+		{
+			auto it = postHandlers.find(bus);
+
+			if(it != std::end(postHandlers))
+			{
+				for(auto & h : it->second)
+					(*h)(bus, event);
+			}
+		}
 	}
 
-	static SubscriptionRegistry<Event> * get()
+	static SubscriptionRegistry<E> * get()
 	{
-		static std::unique_ptr<SubscriptionRegistry<Event>> Instance = make_unique<SubscriptionRegistry<Event>>();
+		static std::unique_ptr<SubscriptionRegistry<E>> Instance = make_unique<SubscriptionRegistry<E>>();
 		return Instance.get();
 	}
 
@@ -70,9 +85,9 @@ private:
 		{
 		}
 
-		void operator()(Event * event)
+		void operator()(const EventBus * bus, E & event)
 		{
-			cb(*event);
+			cb(bus, event);
 		}
 	private:
 		T cb;
@@ -84,39 +99,49 @@ private:
 	class PreSubscription : public Subscription
 	{
 	public:
-		PreSubscription(std::shared_ptr<PreHandlerStorage> cb_)
-			: cb(cb_)
+		PreSubscription(BusTag tag_, std::shared_ptr<PreHandlerStorage> cb_)
+			: cb(cb_),
+			tag(tag_)
 		{
 		}
 
 		virtual ~PreSubscription()
 		{
-			auto & v = SubscriptionRegistry<Event>::get()->preHandlers;
-			v -= cb;
+			auto & handlers = SubscriptionRegistry<E>::get()->preHandlers;
+			auto it = handlers.find(tag);
+
+			if(it != std::end(handlers))
+				it->second -= cb;
 		}
 	private:
 		std::shared_ptr<PreHandlerStorage> cb;
+		BusTag tag;
 	};
 
 	class PostSubscription : public Subscription
 	{
 	public:
-		PostSubscription(std::shared_ptr<PostHandlerStorage> cb_)
-			: cb(cb_)
+		PostSubscription(BusTag tag_, std::shared_ptr<PostHandlerStorage> cb_)
+			: cb(cb_),
+			tag(tag_)
 		{
 		}
 
 		virtual ~PostSubscription()
 		{
-			auto & v = SubscriptionRegistry<Event>::get()->postHandlers;
-			v -= cb;
+			auto & handlers = SubscriptionRegistry<E>::get()->postHandlers;
+			auto it = handlers.find(tag);
+
+			if(it != std::end(handlers))
+				it->second -= cb;
 		}
 	private:
+		BusTag tag;
 		std::shared_ptr<PostHandlerStorage> cb;
 	};
 
-	std::vector<std::shared_ptr<PreHandlerStorage>> preHandlers;
-	std::vector<std::shared_ptr<PostHandlerStorage>> postHandlers;
+	std::map<BusTag, std::vector<std::shared_ptr<PreHandlerStorage>>> preHandlers;
+	std::map<BusTag, std::vector<std::shared_ptr<PostHandlerStorage>>> postHandlers;
 };
 
 class EventExample
@@ -124,62 +149,79 @@ class EventExample
 public:
 	using PreHandler = SubscriptionRegistry<EventExample>::PreHandler;
 	using PostHandler = SubscriptionRegistry<EventExample>::PostHandler;
+	using BusTag = SubscriptionRegistry<EventExample>::BusTag;
 
-	static std::unique_ptr<Subscription> subscribeBefore(PreHandler && cb)
+public:
+	MOCK_METHOD1(internalExecuteStub, void(const EventBus *));
+
+private:
+
+	void internalExecute(const EventBus * bus)
 	{
-		auto registry = SubscriptionRegistry<EventExample>::get();
-
-		return registry->subscribeBefore(std::move(cb));
+		internalExecuteStub(bus);
 	}
 
-	static std::unique_ptr<Subscription> subscribeAfter(PostHandler && cb)
-	{
-		auto registry = SubscriptionRegistry<EventExample>::get();
+	friend class SubscriptionRegistry<EventExample>;
+};
 
-		return registry->subscribeAfter(std::move(cb));
+class EventBus
+{
+public:
+	template <typename E>
+	std::unique_ptr<Subscription> subscribeBefore(typename E::PreHandler && cb)
+	{
+		auto registry = SubscriptionRegistry<E>::get();
+		return registry->subscribeBefore(this, std::move(cb));
 	}
 
-	void execute()
+	template <typename E>
+	std::unique_ptr<Subscription> subscribeAfter(typename E::PostHandler && cb)
 	{
-		SubscriptionRegistry<EventExample>::get()->executeEvent(this);
+		auto registry = SubscriptionRegistry<E>::get();
+		return registry->subscribeAfter(this, std::move(cb));
 	}
 
-	MOCK_METHOD0(internalExecute, void());
+	template <typename E>
+	void executeEvent(E & event) const
+	{
+		SubscriptionRegistry<E>::get()->executeEvent(this, event);
+	}
 };
 
 class ListenerMock
 {
 public:
-	MOCK_METHOD1(beforeEvent, void(EventExample &));
-	MOCK_METHOD1(afterEvent, void(const EventExample &));
+	MOCK_METHOD2(beforeEvent, void(const EventBus *, EventExample &));
+	MOCK_METHOD2(afterEvent, void(const EventBus *, const EventExample &));
 };
 
 class EventBusTest : public Test
 {
-
+public:
+	EventExample event1;
+	EventExample event2;
+	EventBus subject1;
+	EventBus subject2;
 };
 
 TEST_F(EventBusTest, ExecuteNoListeners)
 {
-	EventExample event;
-	EXPECT_CALL(event, internalExecute()).Times(1);
-	event.execute();
+	EXPECT_CALL(event1, internalExecuteStub(_)).Times(1);
+	subject1.executeEvent(event1);
 }
 
 TEST_F(EventBusTest, ExecuteIgnoredSubscription)
 {
 	StrictMock<ListenerMock> listener;
 
-	EventExample event;
+	subject1.subscribeBefore<EventExample>(std::bind(&ListenerMock::beforeEvent, &listener, _1, _2));
+	subject1.subscribeAfter<EventExample>(std::bind(&ListenerMock::afterEvent, &listener, _1, _2));
 
-	EventExample::subscribeBefore(std::bind(&ListenerMock::beforeEvent, &listener, _1));
-	EventExample::subscribeAfter(std::bind(&ListenerMock::afterEvent, &listener, _1));
+	EXPECT_CALL(listener, beforeEvent(_,_)).Times(0);
+	EXPECT_CALL(event1, internalExecuteStub(_)).Times(1);
+	EXPECT_CALL(listener, afterEvent(_,_)).Times(0);
 
-	EXPECT_CALL(listener, beforeEvent(_)).Times(0);
-	EXPECT_CALL(event, internalExecute()).Times(1);
-	EXPECT_CALL(listener, afterEvent(_)).Times(0);
-
-	event.execute();
+	subject1.executeEvent(event1);
 }
 
 TEST_F(EventBusTest, ExecuteSequence)
@@ -187,23 +229,40 @@ TEST_F(EventBusTest, ExecuteSequence)
 	StrictMock<ListenerMock> listener1;
 	StrictMock<ListenerMock> listener2;
 
-	EventExample event;
-
-	auto subscription1 = EventExample::subscribeBefore(std::bind(&ListenerMock::beforeEvent, &listener1, _1));
-	auto subscription2 = EventExample::subscribeAfter(std::bind(&ListenerMock::afterEvent, &listener1, _1));
-	auto subscription3 = EventExample::subscribeBefore(std::bind(&ListenerMock::beforeEvent, &listener2, _1));
-	auto subscription4 = EventExample::subscribeAfter(std::bind(&ListenerMock::afterEvent, &listener2, _1));
+	auto subscription1 = subject1.subscribeBefore<EventExample>(std::bind(&ListenerMock::beforeEvent, &listener1, _1, _2));
+	auto subscription2 = subject1.subscribeAfter<EventExample>(std::bind(&ListenerMock::afterEvent, &listener1, _1, _2));
+	auto subscription3 = subject1.subscribeBefore<EventExample>(std::bind(&ListenerMock::beforeEvent, &listener2, _1, _2));
+	auto subscription4 = subject1.subscribeAfter<EventExample>(std::bind(&ListenerMock::afterEvent, &listener2, _1, _2));
 
 	{
 		InSequence local;
-		EXPECT_CALL(listener1, beforeEvent(Ref(event))).Times(1);
-		EXPECT_CALL(listener2, beforeEvent(Ref(event))).Times(1);
-		EXPECT_CALL(event, internalExecute()).Times(1);
-		EXPECT_CALL(listener1, afterEvent(Ref(event))).Times(1);
-		EXPECT_CALL(listener2, afterEvent(Ref(event))).Times(1);
+		EXPECT_CALL(listener1, beforeEvent(Eq(&subject1), Ref(event1))).Times(1);
+		EXPECT_CALL(listener2, beforeEvent(Eq(&subject1), Ref(event1))).Times(1);
+		EXPECT_CALL(event1, internalExecuteStub(_)).Times(1);
+		EXPECT_CALL(listener1, afterEvent(Eq(&subject1), Ref(event1))).Times(1);
+		EXPECT_CALL(listener2, afterEvent(Eq(&subject1), Ref(event1))).Times(1);
 	}
 
-	event.execute();
+	subject1.executeEvent(event1);
+}
+
+TEST_F(EventBusTest, BusesAreIndependent)
+{
+	StrictMock<ListenerMock> listener1;
+	StrictMock<ListenerMock> listener2;
+
+	auto subscription1 = subject1.subscribeBefore<EventExample>(std::bind(&ListenerMock::beforeEvent, &listener1, _1, _2));
+	auto subscription2 = subject1.subscribeAfter<EventExample>(std::bind(&ListenerMock::afterEvent, &listener1, _1, _2));
+	auto subscription3 = subject2.subscribeBefore<EventExample>(std::bind(&ListenerMock::beforeEvent, &listener2, _1, _2));
+	auto subscription4 = subject2.subscribeAfter<EventExample>(std::bind(&ListenerMock::afterEvent, &listener2, _1, _2));
+
+	EXPECT_CALL(listener1, beforeEvent(_, _)).Times(1);
+	EXPECT_CALL(listener2, beforeEvent(_, _)).Times(0);
+	EXPECT_CALL(event1, internalExecuteStub(_)).Times(1);
+	EXPECT_CALL(listener1, afterEvent(_, _)).Times(1);
+	EXPECT_CALL(listener2, afterEvent(_, _)).Times(0);
+
+	subject1.executeEvent(event1);
 }
 
 }
