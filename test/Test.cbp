@@ -94,7 +94,9 @@
 		<Unit filename="battle/battle_UnitTest.cpp" />
 		<Unit filename="erm/ERMPersistenceTest.cpp" />
 		<Unit filename="erm/ERM_BU.cpp" />
+		<Unit filename="erm/ERM_MF.cpp" />
 		<Unit filename="erm/ExamplesTest.cpp" />
+		<Unit filename="events/EventBusTest.cpp" />
 		<Unit filename="game/CGameStateTest.cpp" />
 		<Unit filename="googletest/googlemock/src/gmock-all.cc" />
 		<Unit filename="googletest/googletest/src/gtest-all.cc" />
